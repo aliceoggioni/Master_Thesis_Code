@@ -1,0 +1,608 @@
+# Libraries
+
+```{r, warning=FALSE, message=FALSE}
+library(lme4)
+library(survival)
+library(MASS)
+library(tidyverse)
+library(glmnet)
+library(doRNG)
+library(survivalROC)
+library(doParallel)
+library(parallel)
+library(corrplot)
+library(splines)
+library(ptmixed)
+library(mgcv)
+library(foreach)
+```
+
+
+
+
+
+
+# Simulation functions
+
+```{r}
+# From script
+rgompertz_ph <- function(n, alpha, beta, linpred = 0){
+  u <- runif(n)
+  a <- alpha * exp(linpred)
+  log(1 - log(u) * beta / a) / beta
+}
+
+  
+# To simulate everything at once
+simulate_all <- function(n = 500, # sample size
+                         n_bio = 90,
+                         times = c(1,2,3,4), # number of measurements
+                         beta0 = rep(0, times = 3), # fixed intercept
+                         beta1 = c(0, 0, 0), # fixed slope
+                         beta2 = c(0.1, 0.1, 0.1), # fixed effect of quadratic term
+                         beta3 = c(0.02, 0.02, 0.02), # fixed effect of cubic term
+                         sigma_b0 = 1, # error for simulating random intercepts
+                         sigma_b1 = 1, # error for simulating random slopes
+                         alpha = exp(-9), beta = 0.085, # gompertz parameters
+                         corr1 = 0, # latent factors
+                         corr2 = 0.5, 
+                         corr3 = -0.7 ,
+                         alpha_cens = exp(-9), beta_cens = 0.085,
+                         sigma_biom = 1 # biomarker-specific noise SD (after factor)
+                         ){
+  
+  
+  
+  ids = rep(1:n, each = max(times))
+  ages = numeric(length(ids))
+  
+  
+    entryage = rnorm(length(unique(ids)), mean = 53, sd = 6)
+    gaps = replicate(length(times) - 1, {rnorm(length(entryage), mean = 5, sd = 2)})
+    bad = which(gaps <= 0)
+    while(length(bad) > 0){
+      gaps[bad] = rnorm(length(bad), 5, 2)
+      bad = which(gaps <= 0)
+    }
+    gaps = as.data.frame(gaps)
+    gaps$entryage = entryage
+    gaps = gaps |> mutate(V1 = V1 + entryage, 
+                          V2 = V1 + V2,
+                          V3 = V2 + V3)
+    gaps = relocate(gaps, entryage, .before = V1)
+    for(i in seq_along(times)){
+    id = seq(i, length(ids), by = length(times))
+    ages[id] = gaps[,i]
+    }
+  
+  
+  ages_std = as.numeric(scale(ages))
+  
+  # assigning each biomarker to a latent factor
+  
+  n_per_factor <- n_bio / 3
+  factor_assign <- rep(1:3, each = n_per_factor)
+
+  bio_names <- paste0("bio", 1:n_bio)
+  
+  # correlation matrix for random effects (no correlation between any of them for now)
+  D4 <- matrix(c(sigma_b0^2, 0,
+                 0, sigma_b1^2), 2,2)
+  
+  b_F1 <- mvrnorm(n, mu = c(0, 0), Sigma = D4)  # col1=intercept, col2=slope
+  b_F2 <- mvrnorm(n, mu = c(0, 0), Sigma = D4)  
+  b_F3 <- mvrnorm(n, mu = c(0, 0), Sigma = D4) 
+  
+  b_F_list = list(b_F1, b_F2, b_F3)
+  
+  lambda_int   <- rnorm(n_bio, mean = 0, sd = 0.5)
+  lambda_slope <- rnorm(n_bio, mean = 0, sd = 0.5)
+  
+  # Pre-allocate: total rows = n subjects × n_tp timepoints
+  n_tp      <- length(times)
+  n_rows    <- n * n_tp
+  n_cols    <- 3 + n_bio  # id, time, age, bio1...bio250
+
+  data_mat  <- matrix(NA, nrow = n_rows, ncol = n_cols)
+
+  row_id <- 1  # keep track of which row we are filling
+
+  
+  
+  for (i in 1:n) {   # loop over subjects
+    for (j in times) {           # loop over timepoints
+
+    t_j   <- times[j]
+    age_j <- ages[(i - 1) * n_tp + j]
+    age_j_std = ages_std[(i - 1) * n_tp + j]
+
+    bio_vals <- numeric(n_bio)
+
+    
+    
+    for (b in 1:n_bio) {
+      k <- factor_assign[b]
+    
+      latent_score <- beta0[k] +
+        lambda_int[b]   * b_F_list[[k]][i, 1] +
+        lambda_slope[b] * (beta1[k] + b_F_list[[k]][i, 2]) * age_j_std +
+        beta2[k]*age_j_std^2 + beta3[k]*age_j_std^3
+    
+      bio_vals[b] <- latent_score + rnorm(1, 0, sigma_biom)
+    }
+
+    # Fill the current row: id, time, age, then all biomarker values
+    data_mat[row_id, ] <- c(i, t_j, age_j, bio_vals)
+    row_id <- row_id + 1
+  }
+}
+
+# Convert matrix to data frame and name the columns
+data_long           <- as.data.frame(data_mat)
+colnames(data_long) <- c("id", "time", "age", bio_names)
+data_long$id        <- as.integer(data_long$id)
+
+  
+  # Simulate survival
+  # Linear predictor: weighted sum of subject-specific slopes on each latent factor
+  linpred <- corr1 * b_F1[, 2] + corr2 * b_F2[, 2] + corr3 * b_F3[, 2]
+  linpred_std <- (linpred - mean(linpred)) / sd(linpred)
+
+  # Draw age at death from Gompertz PH model
+  age_death <- rgompertz_ph(n, alpha, beta, linpred_std)
+  C_time <- rgompertz_ph(n, alpha_cens, beta_cens, linpred = 0)
+
+  obs_time <- pmin(age_death, C_time)
+  
+  status   <- as.integer(age_death <= C_time)
+
+  surv_data <- data.frame(
+    id         = 1:n,
+    Age_Death   = obs_time,
+    Death     = status,
+    linpred_std    = linpred_std,
+    true_b1_F1 = b_F1[, 2],
+    true_b1_F2 = b_F2[, 2],
+    true_b1_F3 = b_F3[, 2]
+  )
+  
+  
+  # Exclude measurements after event time
+  data_long = data_long |>
+    left_join(surv_data[, c("id", "Age_Death")], by = "id") |>
+      filter(age <= Age_Death) |>
+      select(-Age_Death)
+  
+    list(
+    longitudinal  = data_long,
+    survival      = surv_data,
+    factor_assign = factor_assign,
+    true_b        = list(F1 = b_F1,
+                         F2 = b_F2,
+                         F3 = b_F3)
+  )
+  
+}
+```
+
+
+
+# Two-step cox function
+
+```{r}
+twostepcox_slopes = function(long_df, surv_df, n_folds = 5, 
+                             analysis_name = "", 
+                             verbose = FALSE, linear = TRUE){
+  
+  ######## Flipping for PoA
+  maxcol_bio = ncol(long_df)
+  long_df_scaled <- long_df |>
+  mutate(across(starts_with("bio"), ~ as.numeric(scale(.x))))
+  for(i in 4:maxcol_bio){
+    corr = cor(long_df_scaled[,i], long_df_scaled$age, use = "complete.obs")
+    sign_flip = if (corr > 0) 1 else -1
+    long_df_scaled[,i] = long_df_scaled[,i] * sign_flip
+  }
+  
+  
+  ######## LMMs for PoA
+  slopespoa = data.frame(id = unique(long_df_scaled$id))
+  for(i in 4:maxcol_bio){
+    name = colnames(long_df_scaled)[i]
+    f <- formula(paste(name, "~ (age|id) + age"))
+    model <- lmer(f, data=long_df_scaled)
+    raneftab = ranef(model)$id
+    raneftab[,1] = NULL
+    colnames(raneftab) = name
+    raneftab$id = as.integer(rownames(raneftab))
+    slopespoa = full_join(raneftab, slopespoa, by = c("id" = "id"))
+  }
+  
+  slopespoacomplete = slopespoa[complete.cases(slopespoa),]
+  slopesmatrixpoa  = as.matrix(slopespoacomplete[,c(1, 3:maxcol_bio-2)])
+  slopespoaid  = as.data.frame(slopesmatrixpoa)
+  slopespoaid$id = slopespoacomplete$id
+  
+  
+  ######## LMMs
+  maxcol_bio = ncol(long_df)
+  slopestable = data.frame(id = unique(long_df$id))
+  for(i in 4:maxcol_bio){
+    name = colnames(long_df)[i]
+    if(linear == TRUE){
+      f <- formula(paste(name, "~ (age|id) + age"))
+    } else {
+      f <- formula(paste(name, "~ (age|id) + bs(age)"))
+    }
+    suppressWarnings({model <- lmer(f, data=long_df)})
+    
+    raneftab = ranef(model)$id
+    raneftab[,1] = NULL
+    colnames(raneftab) = name
+    raneftab$id = as.integer(rownames(raneftab))
+    slopestable = full_join(raneftab, slopestable, by = "id")
+  }
+  slopestablecomplete = slopestable[complete.cases(slopestable),]
+
+  if (nrow(slopestablecomplete) == 0) {
+    stop("All rows dropped by complete.cases()")
+  }
+  slopesmatrix = as.matrix(slopestablecomplete[,c(1, 3:(maxcol_bio-2))])
+  slopematscaled = scale(slopesmatrix)
+  slopestableid = as.data.frame(slopematscaled)
+  slopestableid$id = slopestablecomplete$id
+  
+  
+  ######## Survival Model
+  survival_table = left_join(slopestableid, surv_df, by = c("id" = "id"))
+  survival_table_poa = left_join(slopespoaid, surv_df, by = c("id" = "id"))
+  n_deaths = sum(survival_table$Death, na.rm = T)
+  entryage = long_df |> group_by(id) |> summarise(Age_Entry = max(age, na.rm = TRUE))
+  survival_table = left_join(survival_table, entryage, by = c("id" = "id"))
+  survival_table_poa = left_join(survival_table_poa, entryage, by = c("id" = "id"))
+  surv_model = Surv(survival_table$Age_Entry, survival_table$Age_Death,
+                  survival_table$Death)
+  surv_model_poa = Surv(survival_table_poa$Age_Entry, survival_table_poa$Age_Death,
+                  survival_table_poa$Death)
+  
+  
+  ######## Models
+  model_r =  suppressWarnings({cv.glmnet(slopematscaled, surv_model, 
+                          family = "cox", alpha = 0)})
+
+  model_l =  suppressWarnings({cv.glmnet(slopematscaled, surv_model, 
+                          family = "cox", alpha = 1)})
+  
+  model_e =  suppressWarnings({cv.glmnet(slopematscaled, surv_model, 
+                          family = "cox", alpha = 0.5)})
+  
+  
+  ######## Apparent Measures
+  
+  ######## TRUE
+  #### C-Index
+  fit_lp_t <- coxph(Surv(Age_Entry, Age_Death, Death) ~ linpred_std, 
+                       data = survival_table)
+  true_c = summary(fit_lp_t)$concordance
+  
+  #### tdAUC
+  t_pred <- median(survival_table$Age_Death[survival_table$Death == 1])
+  
+  roc_obj_t <- survivalROC(Stime = survival_table$Age_Death, 
+                         status = survival_table$Death,
+                         entry = survival_table$Age_Entry,
+                         marker = survival_table$linpred_std, 
+                         predict.time = t_pred, method = "KM")
+  true_tdAUC = roc_obj_t$AUC
+  
+  
+  #### Brier Score
+  survival_table_tis = survival_table |> mutate(Age_Death = Age_Death - Age_Entry)
+  assign("survival_table_tis", survival_table_tis, envir = .GlobalEnv)
+  t_pred_b <- median(survival_table_tis$Age_Death[survival_table_tis$Death == 1])
+  fit_cox_t = coxph(Surv(Age_Death, Death) ~ linpred_std, 
+                       data = survival_table_tis)
+  true_brier = brier(fit_cox_t, times = t_pred_b)$rsquared
+  cindex_uno_t = concordance(fit_cox_t, timewt="n/G2")$concordance
+  
+  
+  ####### Ridge
+  
+  #### C-Index
+  pred_lp_dev_r <- predict(model_r, newx = slopematscaled, s = "lambda.min", 
+                              type = "link")
+  pred_lp_dev_r <- as.numeric(pred_lp_dev_r)
+  survival_table$pred_lp_dev_r = pred_lp_dev_r
+  fit_lp_r <- coxph(Surv(Age_Entry, Age_Death, Death) ~ pred_lp_dev_r, 
+                       data = survival_table)
+  cindex_r = summary(fit_lp_r)$concordance
+  
+  #### tdAUC
+  roc_obj_r <- survivalROC(Stime = survival_table$Age_Death, 
+                         status = survival_table$Death,
+                         entry = survival_table$Age_Entry,
+                         marker = pred_lp_dev_r, 
+                         predict.time = t_pred, method = "KM")
+  auc_r = roc_obj_r$AUC
+  
+  
+  #### Brier Score
+  survival_table_tis$pred_lp_dev_r = pred_lp_dev_r
+  fit_cox_r = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_r, 
+                       data = survival_table_tis)
+  brier_r = brier(fit_cox_r, times = t_pred_b)$rsquared
+  cindex_uno_r = concordance(fit_cox_r, timewt="n/G2")$concordance
+  
+  
+  ####### Lasso
+  
+  c_l = sum(coef(model_l, s = "lambda.min") != 0)
+  if(c_l == 0) {
+    cindex_l = NA
+    auc_l = NA
+    brier_l = NA
+    cindex_uno_l = NA
+  } else {
+    #### C-Index
+    pred_lp_dev_l <- predict(model_l, newx = slopematscaled, 
+                             s = "lambda.min", type = "link")
+    pred_lp_dev_l <- as.numeric(pred_lp_dev_l)
+    survival_table$pred_lp_dev_l = pred_lp_dev_l
+    fit_lp_l <- coxph(Surv(Age_Entry, Age_Death, Death) ~ pred_lp_dev_l, 
+                      data = survival_table)
+    cindex_l = summary(fit_lp_l)$concordance
+    
+    #### tdAUC
+    roc_obj_l <- survivalROC(Stime = survival_table$Age_Death, 
+                         status = survival_table$Death,
+                         entry = survival_table$Age_Entry,
+                         marker = pred_lp_dev_l, 
+                         predict.time = t_pred, method = "KM")
+    auc_l = roc_obj_l$AUC
+    
+    #### Brier Score
+    survival_table_tis$pred_lp_dev_l = pred_lp_dev_l
+    fit_cox_l = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_l, 
+                         data = survival_table_tis)
+    brier_l = brier(fit_cox_l, times = t_pred_b)$rsquared
+    cindex_uno_l = concordance(fit_cox_l, timewt="n/G2")$concordance
+  }
+  
+  ####### Elastic Net
+  c_e = sum(coef(model_e, s = "lambda.min") != 0)
+  
+  if(c_e == 0) {
+    cindex_e = NA
+    auc_e = NA
+    brier_e = NA
+    cindex_uno_e = NA
+  } else {
+    #### C-Index
+    pred_lp_dev_e <- predict(model_e, newx = slopematscaled, 
+                             s = "lambda.min", type = "link")
+    pred_lp_dev_e <- as.numeric(pred_lp_dev_e)
+    survival_table$pred_lp_dev_e = pred_lp_dev_e
+    fit_lp_e <- coxph(Surv(Age_Entry, Age_Death, Death) ~ pred_lp_dev_e, 
+                      data = survival_table)
+    cindex_e = summary(fit_lp_e)$concordance
+    
+    #### tdAUC
+    roc_obj_e <- survivalROC(Stime = survival_table$Age_Death, 
+                         status = survival_table$Death,
+                         entry = survival_table$Age_Entry,
+                         marker = pred_lp_dev_e, 
+                         predict.time = t_pred, method = "KM")
+    auc_e = roc_obj_e$AUC
+    
+    #### Brier Score
+    survival_table_tis$pred_lp_dev_e = pred_lp_dev_e
+    fit_cox_e = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_e, 
+                           data = survival_table_tis)
+    brier_e = brier(fit_cox_e, times = t_pred_b)$rsquared
+    cindex_uno_e = concordance(fit_cox_e, timewt="n/G2")$concordance
+  }
+  
+  
+  ####### Original PoA
+  #### C-Index
+  sum_score <- rowSums(slopesmatrixpoa)
+  survival_table_poa$sum_score = sum_score
+  fit_sum <- coxph(Surv(Age_Entry, Age_Death, Death) ~ sum_score, 
+                   data = survival_table_poa)
+  cindex_sum = summary(fit_sum)$concordance
+  
+  #### tdAUC
+  roc_obj_s <- survivalROC(Stime = survival_table_poa$Age_Death, 
+                         status = survival_table_poa$Death,
+                         entry = survival_table_poa$Age_Entry,
+                         marker = sum_score, 
+                         predict.time = t_pred, method = "KM")
+  auc_s = roc_obj_s$AUC
+  
+  #### Brier Score
+  survival_table_tis_poa = survival_table_poa |> mutate(Age_Death = Age_Death - Age_Entry)
+  assign("survival_table_tis_poa", survival_table_tis_poa, envir = .GlobalEnv)
+  survival_table_tis_poa$sum_score = sum_score
+  fit_cox_s = coxph(Surv(Age_Death, Death) ~ sum_score, 
+                         data = survival_table_tis_poa)
+  brier_s = brier(fit_cox_s, times = t_pred_b)$rsquared
+  cindex_uno_s = concordance(fit_cox_s, timewt="n/G2")$concordance
+  
+  
+  
+  
+    ############# Cross-validation
+    k <- n_folds
+    
+    ids = unique(survival_table$id)
+      
+    
+    foldsize <- floor(length(ids)/k)
+    folds <- rep(1:k, each= foldsize)
+    
+    if(length(folds) < length(ids)){
+      folds[(length(folds)+1):length(ids)] <- sample(1:k,
+              length(ids) - length(folds))
+    }
+    # Store linear predictors and test set info across folds
+    linpred_cv_r   <- numeric(length(ids))
+    linpred_cv_l   <- numeric(length(ids))
+    linpred_cv_e   <- numeric(length(ids))
+    
+    folds <- sample(folds)
+    for(i in 1:k) {
+      test_indices <- folds == i
+      test_set_surv   <- survival_table[test_indices,]
+      test_set_slopes  <- slopematscaled[test_indices,]
+      train_set_surv  <- survival_table[!test_indices,]
+      train_set_slopes <- slopematscaled[!test_indices,]
+
+      surv_model_cv <- Surv(train_set_surv$Age_Entry, train_set_surv$Age_Death,
+                            train_set_surv$Death)
+      
+      if (sum(train_set_surv$Death) == 0) {
+        stop(paste("Fold", i, "has zero deaths in training set"))
+      }
+
+      ########### Ridge
+      ridge_cv <- suppressWarnings({cv.glmnet(train_set_slopes, surv_model_cv, 
+                            family = "cox", alpha = 0)})
+      linpred_cv_r[test_indices] <- as.numeric(predict(ridge_cv,
+                                                       newx = test_set_slopes,
+                                                       s = "lambda.min", 
+                                                       type = "link"))
+
+      ########### Lasso
+      if(c_l != 0){
+      lasso_cv <- suppressWarnings({cv.glmnet(train_set_slopes, surv_model_cv, 
+                            family = "cox", alpha = 1)})
+      linpred_cv_l[test_indices] <- as.numeric(predict(lasso_cv,
+                                                       newx = test_set_slopes,
+                                                       s = "lambda.min",
+                                                       type = "link"))
+      }
+      ########### Elastic Net
+      if(c_e != 0){
+      en_cv <- suppressWarnings({cv.glmnet(train_set_slopes, surv_model_cv, 
+                         family = "cox", alpha = 0.5)})
+      linpred_cv_e[test_indices] <- as.numeric(predict(en_cv,
+                                                       newx = test_set_slopes,
+                                                       s = "lambda.min", 
+                                                       type = "link"))
+      }
+
+    }
+    
+    # Performance measures in cross validated linear predictor
+    t_pred_cv <- t_pred
+    
+    
+    
+    ########### Ridge
+    survival_table$linpred_cv_r <- linpred_cv_r
+    fit_cv_r       <- coxph(Surv(Age_Entry, Age_Death, Death) ~ linpred_cv_r, 
+                            data = survival_table)
+    c_index_cv_r   <- summary(fit_cv_r)$concordance
+    roc_obj_cv_r   <- survivalROC(Stime = survival_table$Age_Death, 
+                                  status = survival_table$Death,
+                                  entry = survival_table$Age_Entry,
+                                  marker = linpred_cv_r, 
+                                  predict.time = t_pred_cv, method = "KM")
+    tdauc_cv_r     <- roc_obj_cv_r$AUC
+    
+    survival_table_tis$linpred_cv_r = linpred_cv_r
+    fit_cox_cv_r = coxph(Surv(Age_Death, Death) ~ linpred_cv_r, 
+                         data = survival_table_tis)
+    brier_cv_r = brier(fit_cox_cv_r, times = t_pred_b)$rsquared
+    cindex_uno_cv_r = concordance(fit_cox_cv_r, timewt="n/G2")$concordance
+    
+    ########### Lasso
+    if(c_l == 0){
+      c_index_cv_l = NA
+      tdauc_cv_l = NA
+      brier_cv_l = NA
+      cindex_uno_cv_l = NA
+      
+    } else {
+      survival_table$linpred_cv_l <- linpred_cv_l
+      fit_cv_l       <- coxph(Surv(Age_Entry, Age_Death, Death) ~ linpred_cv_l, 
+                            data = survival_table)
+      c_index_cv_l   <- summary(fit_cv_l)$concordance
+      roc_obj_cv_l   <- survivalROC(Stime = survival_table$Age_Death, 
+                                  status = survival_table$Death,
+                                  entry = survival_table$Age_Entry,
+                                  marker = linpred_cv_l, 
+                                  predict.time = t_pred_cv, method = "KM")
+      tdauc_cv_l     <- roc_obj_cv_l$AUC
+      
+      survival_table_tis$linpred_cv_l = linpred_cv_l
+      fit_cox_cv_l = coxph(Surv(Age_Death, Death) ~ linpred_cv_l, 
+                           data = survival_table_tis)
+      brier_cv_l = brier(fit_cox_cv_l, times = t_pred_b)$rsquared
+      cindex_uno_cv_l = concordance(fit_cox_cv_l, timewt="n/G2")$concordance
+    }
+    
+    
+    
+    ########### Elastic Net
+    if(c_e == 0){
+      c_index_cv_e = NA
+      tdauc_cv_e = NA
+      brier_cv_e = NA
+      cindex_uno_cv_e = NA
+      
+    } else {
+      survival_table$linpred_cv_e <- linpred_cv_e
+      fit_cv_e       <- coxph(Surv(Age_Entry, Age_Death, Death) ~ linpred_cv_e, 
+                            data = survival_table)
+      c_index_cv_e   <- summary(fit_cv_e)$concordance
+      roc_obj_cv_e   <- survivalROC(Stime = survival_table$Age_Death, 
+                                  status = survival_table$Death,
+                                  entry = survival_table$Age_Entry,
+                                  marker = linpred_cv_e, 
+                                  predict.time = t_pred_cv, method = "KM")
+      tdauc_cv_e     <- roc_obj_cv_e$AUC
+    
+      survival_table_tis$linpred_cv_e = linpred_cv_e
+      fit_cox_cv_e = coxph(Surv(Age_Death, Death) ~ linpred_cv_e, 
+                           data = survival_table_tis)
+      brier_cv_e = brier(fit_cox_cv_e, times = t_pred_b)$rsquared
+      cindex_uno_cv_e = concordance(fit_cox_cv_e, timewt="n/G2")$concordance
+      
+    }
+    
+    
+    ########### Sum Score
+  
+    c_index_cv_sum <- cindex_sum
+    tdauc_cv_sum   <- auc_s
+    brier_cv_sum = brier_s
+    cindex_uno_cv_s = cindex_uno_s
+    
+    results_table = data.frame(
+        R_C  = cindex_r[1],   R_C_cv = c_index_cv_r[1], 
+        R_auc  = auc_r,       R_auc_cv = tdauc_cv_r,
+        R_B = brier_r,        R_B_cv = brier_cv_r,
+        R_unoC = cindex_uno_r, R_unoC_cv = cindex_uno_cv_r,
+      
+        L_C  = cindex_l[1],   L_C_cv = c_index_cv_l[1], 
+        L_auc  = auc_l,       L_auc_cv = tdauc_cv_l,
+        L_B = brier_l,        L_B_cv = brier_cv_l,
+        L_unoC = cindex_uno_l, L_unoC_cv = cindex_uno_cv_l,
+      
+        E_C  = cindex_e[1],   E_C_cv = c_index_cv_e[1],
+        E_auc  = auc_e,       E_auc_cv = tdauc_cv_e,
+        E_B = brier_e,        E_B_cv = brier_cv_e,   
+        E_unoC = cindex_uno_e, E_unoC_cv = cindex_uno_cv_e,
+      
+        P_C  = cindex_sum[1], P_C_cv = c_index_cv_sum[1],
+        P_auc  = auc_s,       P_auc_cv = tdauc_cv_sum,
+        P_B = brier_s,        P_B_cv = brier_cv_sum,
+        P_unoC = cindex_uno_s, P_unoC_cv = cindex_uno_cv_s,
+        
+        true_C = true_c[1], true_unoC = cindex_uno_t,
+        true_tdAUC = true_tdAUC, true_brier = true_brier)
+    
+    return(results_table)
+}
+```
