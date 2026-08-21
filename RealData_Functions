@@ -245,7 +245,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
   survival_table_tis$pred_lp_dev_r = pred_lp_dev_r
   fit_tis_r <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_r,
                      data = survival_table_tis)
-  brier_r = brier(fit_tis_r, times = t_pred_b)$rsquared
+  brier_r = brier(fit_tis_r, times = t_pred_b)$brier
   cindex_uno_r = concordance(fit_tis_r, timewt="n/G2")$concordance
   
   ####### Lasso
@@ -289,7 +289,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
     survival_table_tis$pred_lp_dev_l = pred_lp_dev_l
     fit_tis_l <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_l,
                        data = survival_table_tis)
-    brier_l = brier(fit_tis_l, times = t_pred_b)$rsquared
+    brier_l = brier(fit_tis_l, times = t_pred_b)$brier
     cindex_uno_l = concordance(fit_tis_l, timewt="n/G2")$concordance
   }
   
@@ -335,7 +335,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
     survival_table_tis$pred_lp_dev_e = pred_lp_dev_e
     fit_tis_e <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_e,
                        data = survival_table_tis)
-    brier_e = brier(fit_tis_e, times = t_pred_b)$rsquared
+    brier_e = brier(fit_tis_e, times = t_pred_b)$brier
     cindex_uno_e = concordance(fit_tis_e, timewt="n/G2")$concordance
   }
   
@@ -373,7 +373,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
   survival_table_tis_poa$sum_score = sum_score
   fit_tis_s <- coxph(Surv(Age_Death, Death) ~ sum_score,
                      data = survival_table_tis_poa)
-  brier_s = brier(fit_tis_s, times = t_pred_b)$rsquared
+  brier_s = brier(fit_tis_s, times = t_pred_b)$brier
   cindex_uno_s = concordance(fit_tis_s, timewt="n/G2")$concordance
   
   if(verbose == TRUE){
@@ -483,7 +483,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
     tdauc_cv_r   <- roc_obj_cv_r$AUC
     fit_tis_cv_r <- coxph(Surv(Age_Death, Death) ~ linpred_cv_r,
                           data = survival_table_tis)
-    brier_r_cv   <- brier(fit_tis_cv_r, times = t_pred_b_cv)$rsquared
+    brier_r_cv   <- brier(fit_tis_cv_r, times = t_pred_b_cv)$brier
     cindex_uno_cv_r = concordance(fit_tis_cv_r, timewt="n/G2")$concordance
     
     ########### Lasso CV
@@ -518,7 +518,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
       tdauc_cv_l   <- roc_obj_cv_l$AUC
       fit_tis_cv_l <- coxph(Surv(Age_Death, Death) ~ linpred_cv_l,
                             data = survival_table_tis)
-      brier_l_cv   <- brier(fit_tis_cv_l, times = t_pred_b_cv)$rsquared
+      brier_l_cv   <- brier(fit_tis_cv_l, times = t_pred_b_cv)$brier
       cindex_uno_cv_l = concordance(fit_tis_cv_l, timewt="n/G2")$concordance
     }
     
@@ -554,7 +554,7 @@ twostepcox_slopes = function(long_df, surv_df, landmark = "none",
       tdauc_cv_e   <- roc_obj_cv_e$AUC
       fit_tis_cv_e <- coxph(Surv(Age_Death, Death) ~ linpred_cv_e,
                             data = survival_table_tis)
-      brier_e_cv   <- brier(fit_tis_cv_e, times = t_pred_b_cv)$rsquared
+      brier_e_cv   <- brier(fit_tis_cv_e, times = t_pred_b_cv)$brier
       cindex_uno_cv_e = concordance(fit_tis_cv_e, timewt="n/G2")$concordance
     }
     
@@ -936,7 +936,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
   survival_table_tis$pred_lp_dev_r = pred_lp_dev_r
   fit_tis_r <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_r,
                      data = survival_table_tis)
-  brier_r = brier(fit_tis_r, times = t_pred_b)$rsquared
+  brier_r = brier(fit_tis_r, times = t_pred_b)$brier
   cindex_uno_r = concordance(fit_tis_r, timewt="n/G2")$concordance
   
   
@@ -975,7 +975,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
     survival_table_tis$pred_lp_dev_l = pred_lp_dev_l
     fit_tis_l <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_l,
                        data = survival_table_tis)
-    brier_l = brier(fit_tis_l, times = t_pred_b)$rsquared
+    brier_l = brier(fit_tis_l, times = t_pred_b)$brier
     cindex_uno_l = concordance(fit_tis_l, timewt="n/G2")$concordance
   }
   
@@ -1015,7 +1015,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
     survival_table_tis$pred_lp_dev_e = pred_lp_dev_e
     fit_tis_e <- coxph(Surv(Age_Death, Death) ~ pred_lp_dev_e,
                        data = survival_table_tis)
-    brier_e = brier(fit_tis_e, times = t_pred_b)$rsquared
+    brier_e = brier(fit_tis_e, times = t_pred_b)$brier
     cindex_uno_e = concordance(fit_tis_e, timewt="n/G2")$concordance
   }
   
@@ -1116,7 +1116,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
     tdauc_cv_r   <- roc_obj_cv_r$AUC
     fit_tis_cv_r <- coxph(Surv(Age_Death, Death) ~ linpred_cv_r,
                           data = survival_table_tis)
-    brier_r_cv   <- brier(fit_tis_cv_r, times = t_pred_b_cv)$rsquared
+    brier_r_cv   <- brier(fit_tis_cv_r, times = t_pred_b_cv)$brier
     cindex_uno_cv_r = concordance(fit_tis_cv_r, timewt="n/G2")$concordance
     
     ########### Lasso CV
@@ -1148,7 +1148,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
       tdauc_cv_l   <- roc_obj_cv_l$AUC
       fit_tis_cv_l <- coxph(Surv(Age_Death, Death) ~ linpred_cv_l,
                             data = survival_table_tis)
-      brier_l_cv   <- brier(fit_tis_cv_l, times = t_pred_b_cv)$rsquared
+      brier_l_cv   <- brier(fit_tis_cv_l, times = t_pred_b_cv)$brier
       cindex_uno_cv_l = concordance(fit_tis_cv_l, timewt="n/G2")$concordance
     }
     
@@ -1181,7 +1181,7 @@ twostepcox_fitted = function(long_df, surv_df, landmark = "none",
       tdauc_cv_e   <- roc_obj_cv_e$AUC
       fit_tis_cv_e <- coxph(Surv(Age_Death, Death) ~ linpred_cv_e,
                             data = survival_table_tis)
-      brier_e_cv   <- brier(fit_tis_cv_e, times = t_pred_b_cv)$rsquared
+      brier_e_cv   <- brier(fit_tis_cv_e, times = t_pred_b_cv)$brier
       cindex_uno_cv_e = concordance(fit_tis_cv_e, timewt="n/G2")$concordance
     }
    
