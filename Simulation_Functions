@@ -302,7 +302,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
   t_pred_b <- median(survival_table_tis$Age_Death[survival_table_tis$Death == 1])
   fit_cox_t = coxph(Surv(Age_Death, Death) ~ linpred_std, 
                        data = survival_table_tis)
-  true_brier = brier(fit_cox_t, times = t_pred_b)$rsquared
+  true_brier = brier(fit_cox_t, times = t_pred_b)$brier
   cindex_uno_t = concordance(fit_cox_t, timewt="n/G2")$concordance
   
   
@@ -330,7 +330,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
   survival_table_tis$pred_lp_dev_r = pred_lp_dev_r
   fit_cox_r = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_r, 
                        data = survival_table_tis)
-  brier_r = brier(fit_cox_r, times = t_pred_b)$rsquared
+  brier_r = brier(fit_cox_r, times = t_pred_b)$brier
   cindex_uno_r = concordance(fit_cox_r, timewt="n/G2")$concordance
   
   
@@ -364,7 +364,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
     survival_table_tis$pred_lp_dev_l = pred_lp_dev_l
     fit_cox_l = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_l, 
                          data = survival_table_tis)
-    brier_l = brier(fit_cox_l, times = t_pred_b)$rsquared
+    brier_l = brier(fit_cox_l, times = t_pred_b)$brier
     cindex_uno_l = concordance(fit_cox_l, timewt="n/G2")$concordance
   }
   
@@ -398,7 +398,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
     survival_table_tis$pred_lp_dev_e = pred_lp_dev_e
     fit_cox_e = coxph(Surv(Age_Death, Death) ~ pred_lp_dev_e, 
                            data = survival_table_tis)
-    brier_e = brier(fit_cox_e, times = t_pred_b)$rsquared
+    brier_e = brier(fit_cox_e, times = t_pred_b)$brier
     cindex_uno_e = concordance(fit_cox_e, timewt="n/G2")$concordance
   }
   
@@ -425,7 +425,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
   survival_table_tis_poa$sum_score = sum_score
   fit_cox_s = coxph(Surv(Age_Death, Death) ~ sum_score, 
                          data = survival_table_tis_poa)
-  brier_s = brier(fit_cox_s, times = t_pred_b)$rsquared
+  brier_s = brier(fit_cox_s, times = t_pred_b)$brier
   cindex_uno_s = concordance(fit_cox_s, timewt="n/G2")$concordance
   
   
@@ -513,7 +513,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
     survival_table_tis$linpred_cv_r = linpred_cv_r
     fit_cox_cv_r = coxph(Surv(Age_Death, Death) ~ linpred_cv_r, 
                          data = survival_table_tis)
-    brier_cv_r = brier(fit_cox_cv_r, times = t_pred_b)$rsquared
+    brier_cv_r = brier(fit_cox_cv_r, times = t_pred_b)$brier
     cindex_uno_cv_r = concordance(fit_cox_cv_r, timewt="n/G2")$concordance
     
     ########### Lasso
@@ -538,7 +538,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
       survival_table_tis$linpred_cv_l = linpred_cv_l
       fit_cox_cv_l = coxph(Surv(Age_Death, Death) ~ linpred_cv_l, 
                            data = survival_table_tis)
-      brier_cv_l = brier(fit_cox_cv_l, times = t_pred_b)$rsquared
+      brier_cv_l = brier(fit_cox_cv_l, times = t_pred_b)$brier
       cindex_uno_cv_l = concordance(fit_cox_cv_l, timewt="n/G2")$concordance
     }
     
@@ -566,7 +566,7 @@ twostepcox_slopes = function(long_df, surv_df, n_folds = 5,
       survival_table_tis$linpred_cv_e = linpred_cv_e
       fit_cox_cv_e = coxph(Surv(Age_Death, Death) ~ linpred_cv_e, 
                            data = survival_table_tis)
-      brier_cv_e = brier(fit_cox_cv_e, times = t_pred_b)$rsquared
+      brier_cv_e = brier(fit_cox_cv_e, times = t_pred_b)$brier
       cindex_uno_cv_e = concordance(fit_cox_cv_e, timewt="n/G2")$concordance
       
     }
